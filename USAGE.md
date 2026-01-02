@@ -119,6 +119,12 @@ python live.py --config DoorLive.yaml --source 0 --detect-only
 
 # 모든 옵션 조합
 python live.py --config DoorLive.yaml --source 0 --obb --debug --device cpu
+
+# 비디오 파일 처리
+python live.py --config DoorLive.yaml --source "test_video.mp4"
+
+# 비디오 파일 처리 (검출 전용 모드)
+python live.py --config DoorLive.yaml --source "test_video.mp4" --detect-only
 ```
 
 ### 볼트 검사
@@ -144,6 +150,12 @@ python live.py --config BoltLive.yaml --source "rtsp://192.168.1.100:554/stream"
 
 # IP 웹캠 사용 (HTTP)
 python live.py --config BoltLive.yaml --source "http://192.168.1.100:8080/video"
+
+# 비디오 파일 처리
+python live.py --config BoltLive.yaml --source "test_video.mp4"
+
+# 비디오 파일 처리 (검출 전용 모드)
+python live.py --config BoltLive.yaml --source "test_video.mp4" --detect-only
 ```
 
 ## 카메라 소스 옵션 상세
@@ -179,9 +191,73 @@ python live.py --config BoltLive.yaml --source "http://192.168.1.100:8080/video"
 
 ### 비디오 파일
 
-- **비디오 파일**: `--source "test_video.mp4"`
-  - 로컬 비디오 파일로 테스트
-  - 예: `--source "/path/to/video.avi"`
+비디오 파일을 입력으로 사용하면 모든 프레임을 처리하고 결과 비디오를 자동으로 저장합니다.
+
+- **지원 포맷**: `.mp4`, `.avi`, `.mov`, `.mkv`, `.flv`, `.wmv`
+- **사용법**: `--source "test_video.mp4"` 또는 `--source "/path/to/video.avi"`
+
+#### 비디오 파일 처리 특징
+
+1. **모든 프레임 처리**
+   - 비디오 파일의 모든 프레임을 순차적으로 처리
+   - 프레임을 건너뛰지 않고 처음부터 끝까지 모두 처리
+   - 진행 상황이 100프레임마다 표시됨
+
+2. **자동 결과 저장**
+   - 검출 결과가 포함된 비디오가 자동으로 저장됨
+   - 저장 경로: `원본파일명_output_타임스탬프.확장자`
+   - 예: `test_video.mp4` → `test_video_output_20251229_123456.mp4`
+   - 원본 비디오와 동일한 FPS와 해상도로 저장
+
+3. **비디오 정보 자동 감지**
+   - FPS, 해상도, 총 프레임 수를 자동으로 감지
+   - 감지된 정보가 터미널에 출력됨
+
+4. **검사 동작**
+   - 일반 모드: 조건이 만족되면 검사를 수행하지만, 검사 후에도 계속 진행하여 모든 프레임 처리
+   - 여러 조건 만족 시 여러 번 검사 가능
+   - `detect-only` 모드: 모든 프레임에 대해 검출만 수행
+
+5. **프레임 기반 타이머**
+   - 비디오 파일의 경우 프레임 기반 타이머 사용 (더 정확)
+   - 예: 30 FPS 비디오에서 3초 = 90프레임
+
+#### 사용 예시
+
+```bash
+# 기본 비디오 파일 처리
+python live.py --config BoltLive.yaml --source "test_video.mp4"
+
+# 검출 전용 모드로 비디오 처리
+python live.py --config BoltLive.yaml --source "test_video.mp4" --detect-only
+
+# OBB 모드로 비디오 처리
+python live.py --config BoltLive.yaml --source "test_video.mp4" --obb
+
+# 디버그 모드로 비디오 처리 (크롭 이미지도 저장)
+python live.py --config BoltLive.yaml --source "test_video.mp4" --debug
+
+# 모든 옵션 조합
+python live.py --config BoltLive.yaml --source "test_video.mp4" --obb --debug --detect-only
+```
+
+#### 출력 정보
+
+비디오 파일 처리 시 다음 정보가 출력됩니다:
+
+- 비디오 파일 감지 및 정보
+  - FPS, 해상도, 총 프레임 수
+  - 사용된 코덱 정보
+  - 출력 비디오 저장 경로
+
+- 진행 상황
+  - 100프레임마다 진행률 표시
+  - 예상 남은 시간 표시
+
+- 저장 완료 정보
+  - 저장된 파일 경로
+  - 파일 크기 (MB)
+  - 처리된 총 프레임 수
 
 ## 동작 흐름
 
@@ -404,4 +480,14 @@ python live.py --config BoltLive.yaml --source 0 --detect-only --obb
   - 각 부위/볼트별 검사 결과
   - 최종 판정 (양품/불량)
   - 신뢰도 정보
+
+- 비디오 파일 처리 정보 (비디오 파일 사용 시)
+  - 비디오 파일 정보 (FPS, 해상도, 총 프레임)
+  - 진행 상황 (100프레임마다, 예상 남은 시간 포함)
+  - 저장 완료 정보 (파일 경로, 크기, 처리된 프레임 수)
+
+- 비디오 파일 처리 정보 (비디오 파일 사용 시)
+  - 비디오 파일 정보 (FPS, 해상도, 총 프레임)
+  - 진행 상황 (100프레임마다)
+  - 저장 완료 정보 (파일 경로, 크기, 프레임 수)
 

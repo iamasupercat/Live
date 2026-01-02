@@ -71,3 +71,16 @@ Thumbs.db
 *.iso
 *.img
 *.cab
+
+# 비디오 파일
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+*.m4v
+*.m4a
+*.m4b
+*.m4p
+*.m4v

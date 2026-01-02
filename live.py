@@ -148,6 +148,7 @@ class RealtimeInspectionSystem:
         
         # 조건 체크 변수
         self.condition_start_time = None
+        self.condition_start_frame = None  # 비디오 파일용 프레임 카운터
         self.condition_met = False
         self.last_valid_frame = None
         self.last_valid_detections = None
@@ -243,37 +244,103 @@ class RealtimeInspectionSystem:
         print(f"🎥 카메라 시작: {source}")
         print(f"{'='*60}\n")
         
-        # ThreadedCamera로 교체
-        cap = ThreadedCamera(source)    
+        # 비디오 파일인지 확인
+        is_video_file = False
+        if isinstance(source, str) and (source.endswith('.mp4') or source.endswith('.avi') or 
+                                         source.endswith('.mov') or source.endswith('.mkv') or
+                                         source.endswith('.flv') or source.endswith('.wmv')):
+            is_video_file = True
+        
+        # 비디오 파일인 경우 직접 VideoCapture 사용 (모든 프레임 처리)
+        # 카메라는 ThreadedCamera 사용
+        if is_video_file:
+            cap = cv2.VideoCapture(source)
+        else:
+            cap = ThreadedCamera(source)
         
         if not cap.isOpened():
             print(f"❌ 카메라를 열 수 없습니다: {source}")
             return
         
-        # 카메라 속성 설정
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-        cap.set(cv2.CAP_PROP_FPS, 30)
+        # 비디오 파일의 FPS 및 해상도 가져오기
+        video_fps = None
+        video_width = None
+        video_height = None
+        total_frames = None
+        video_writer = None
+        output_video_path = None
+        
+        if is_video_file:
+            video_fps = cap.get(cv2.CAP_PROP_FPS)
+            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            if video_fps > 0:
+                print(f"📹 비디오 파일 감지: FPS = {video_fps:.2f}, 해상도 = {video_width}x{video_height}, 총 프레임 = {total_frames}")
+            else:
+                video_fps = 30.0
+                print(f"⚠️  비디오 FPS를 가져올 수 없어 기본값 30 FPS 사용")
+            
+            # 출력 비디오 파일 경로 생성
+            import os
+            base_name = os.path.splitext(source)[0]
+            ext = os.path.splitext(source)[1]
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_video_path = f"{base_name}_output_{timestamp}{ext}"
+            
+            # VideoWriter 초기화 (여러 코덱 시도하여 호환성 확보)
+            fourcc_options = [
+                ('avc1', 'H.264 (avc1)'),
+                ('mp4v', 'MPEG-4 (mp4v)'),
+                ('XVID', 'Xvid'),
+                ('MJPG', 'Motion JPEG')
+            ]
+            
+            video_writer = None
+            for fourcc_code, codec_name in fourcc_options:
+                fourcc = cv2.VideoWriter_fourcc(*fourcc_code)
+                video_writer = cv2.VideoWriter(output_video_path, fourcc, video_fps, (video_width, video_height))
+                if video_writer.isOpened():
+                    print(f"💾 출력 비디오 저장 경로: {output_video_path}")
+                    print(f"   코덱: {codec_name}, FPS: {video_fps:.2f}, 해상도: {video_width}x{video_height}")
+                    break
+                else:
+                    if video_writer:
+                        video_writer.release()
+                    video_writer = None
+            
+            if video_writer is None or not video_writer.isOpened():
+                print(f"⚠️  비디오 Writer 초기화 실패. 비디오 저장이 불가능할 수 있습니다.")
+                video_writer = None
+        else:
+            # 카메라 속성 설정 (비디오 파일이 아닐 때만)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+            cap.set(cv2.CAP_PROP_FPS, 30)
         
         # 카메라 초기화 대기
         print(f"✓ 카메라 연결 성공")
-        print(f"🔄 카메라 초기화 중...")
-        time.sleep(1.0)
-        
-        for i in range(5):
-            ret, frame = cap.read()
-            if ret:
-                print(f"✓ 카메라 준비 완료")
-                break
-            time.sleep(0.2)
-        else:
-            print(f"⚠️  카메라에서 프레임을 읽을 수 없습니다. 재시도 중...")
+        if not is_video_file:
+            print(f"🔄 카메라 초기화 중...")
             time.sleep(1.0)
-            ret, frame = cap.read()
-            if not ret:
-                print(f"❌ 카메라에서 프레임을 읽을 수 없습니다.")
-                cap.release()
-                return
+            
+            for i in range(5):
+                ret, frame = cap.read()
+                if ret:
+                    print(f"✓ 카메라 준비 완료")
+                    break
+                time.sleep(0.2)
+            else:
+                print(f"⚠️  카메라에서 프레임을 읽을 수 없습니다. 재시도 중...")
+                time.sleep(1.0)
+                ret, frame = cap.read()
+                if not ret:
+                    print(f"❌ 카메라에서 프레임을 읽을 수 없습니다.")
+                    cap.release()
+                    if video_writer:
+                        video_writer.release()
+                    return
         
         if self.detect_only:
             print(f"📋 검출 전용 모드: YOLO 검출 결과만 표시됩니다")
@@ -283,18 +350,38 @@ class RealtimeInspectionSystem:
             print(f"   종료하려면 'q' 키를 누르세요\n")
         
         try:
+            frame_count = 0
+            start_time = time.time()
+            
             while True:
                 ret, frame = cap.read()
                 if not ret:
-                    print("⚠️  프레임을 읽을 수 없습니다. 재시도 중...")
-                    for retry in range(3):
-                        time.sleep(0.5)
-                        ret, frame = cap.read()
-                        if ret:
-                            break
-                    if not ret:
-                        print("❌ 프레임 읽기 실패.")
+                    if is_video_file:
+                        # 비디오 파일이 끝난 경우
+                        elapsed_time = time.time() - start_time
+                        print(f"\n📹 비디오 파일 재생 완료 (총 {frame_count} 프레임 처리, 소요 시간: {elapsed_time:.2f}초)")
                         break
+                    else:
+                        # 카메라인 경우 재시도
+                        print("⚠️  프레임을 읽을 수 없습니다. 재시도 중...")
+                        for retry in range(3):
+                            time.sleep(0.5)
+                            ret, frame = cap.read()
+                            if ret:
+                                break
+                        if not ret:
+                            print("❌ 프레임 읽기 실패.")
+                            break
+                
+                frame_count += 1
+                
+                # 비디오 파일인 경우 진행 상황 표시 (100프레임마다)
+                if is_video_file and total_frames and frame_count % 100 == 0:
+                    progress = (frame_count / total_frames) * 100
+                    elapsed_time = time.time() - start_time
+                    estimated_total = elapsed_time * total_frames / frame_count if frame_count > 0 else 0
+                    remaining = max(0, estimated_total - elapsed_time)
+                    print(f"📊 진행 상황: {frame_count}/{total_frames} 프레임 ({progress:.1f}%) - 예상 남은 시간: {remaining:.1f}초")
                 
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
@@ -332,9 +419,21 @@ class RealtimeInspectionSystem:
                     info_text = f"Detections: {num_detections}"
                     cv2.putText(display_frame, info_text, (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                
+                # 비디오 파일인 경우 모든 프레임을 출력 비디오에 저장
+                if is_video_file and video_writer and video_writer.isOpened():
+                    video_writer.write(display_frame)
+                    
                     cv2.imshow('Real-time Inspection', display_frame)
                     
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                    # 비디오 파일인 경우 FPS에 맞춰 지연 시간 추가
+                    if is_video_file and video_fps:
+                        delay_ms = max(1, int(1000.0 / video_fps))
+                        key = cv2.waitKey(delay_ms) & 0xFF
+                    else:
+                        key = cv2.waitKey(1) & 0xFF
+                    
+                    if key == ord('q'):
                         print("\n사용자가 종료함")
                         break
                     continue
@@ -347,32 +446,55 @@ class RealtimeInspectionSystem:
                     if not self.condition_met:
                         self.condition_met = True
                         self.condition_start_time = time.time()
+                        self.condition_start_frame = frame_count if is_video_file else None
                         print(f"✓ 조건 만족! 타이머 시작...")
                     
-                    elapsed = time.time() - self.condition_start_time
+                    # 비디오 파일인 경우 프레임 기반 타이머, 카메라는 시간 기반 타이머
+                    if is_video_file and video_fps and self.condition_start_frame is not None:
+                        frames_elapsed = frame_count - self.condition_start_frame
+                        required_frames = int(self.required_duration * video_fps)
+                        elapsed = frames_elapsed / video_fps
+                        timer_text = f"Timer: {elapsed:.1f}s / {self.required_duration}s ({frames_elapsed}/{required_frames} frames)"
+                        should_inspect = frames_elapsed >= required_frames
+                    else:
+                        elapsed = time.time() - self.condition_start_time
+                        timer_text = f"Timer: {elapsed:.1f}s / {self.required_duration}s"
+                        should_inspect = elapsed >= self.required_duration
                     
                     self.last_valid_frame = frame.copy()
                     self.last_valid_detections = detections
                     
-                    timer_text = f"Timer: {elapsed:.1f}s / {self.required_duration}s"
                     cv2.putText(display_frame, timer_text, (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
-                    if elapsed >= self.required_duration:
+                    if should_inspect:
                         print(f"\n{'='*60}")
                         print(f"📸 조건이 {self.required_duration}초 이상 유지됨! 검사 시작...")
                         print(f"{'='*60}\n")
                         
-                        cap.release()
-                        cv2.destroyAllWindows()
-                        
-                        self._perform_inspection(self.last_valid_frame, self.last_valid_detections)
-                        return
+                        # 비디오 파일인 경우 검사 후에도 계속 진행
+                        if is_video_file:
+                            # 검사 수행 (화면은 닫지 않음)
+                            self._perform_inspection(self.last_valid_frame.copy(), self.last_valid_detections)
+                            # 타이머 리셋하여 다음 조건 만족 시에도 검사 가능
+                            self.condition_met = False
+                            self.condition_start_time = None
+                            self.condition_start_frame = None
+                            self.last_valid_frame = None
+                            self.last_valid_detections = None
+                            print(f"📹 비디오 파일 처리 계속 진행 중... (프레임 {frame_count}/{total_frames if total_frames else '?'})\n")
+                        else:
+                            # 카메라인 경우 검사 후 종료
+                            cap.release()
+                            cv2.destroyAllWindows()
+                            self._perform_inspection(self.last_valid_frame, self.last_valid_detections)
+                            return
                 else:
                     if self.condition_met:
                         print(f"⚠️  조건 해제됨. 타이머 리셋.")
                         self.condition_met = False
                         self.condition_start_time = None
+                        self.condition_start_frame = None
                         self.last_valid_frame = None
                         self.last_valid_detections = None
                     
@@ -382,12 +504,37 @@ class RealtimeInspectionSystem:
                 
                 cv2.imshow('Real-time Inspection', display_frame)
                 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                # 비디오 파일인 경우 FPS에 맞춰 지연 시간 추가
+                if is_video_file and video_fps:
+                    delay_ms = max(1, int(1000.0 / video_fps))
+                    key = cv2.waitKey(delay_ms) & 0xFF
+                else:
+                    key = cv2.waitKey(1) & 0xFF
+                
+                if key == ord('q'):
                     print("\n사용자가 종료함")
                     break
         
         finally:
             cap.release()
+            if video_writer and video_writer.isOpened():
+                video_writer.release()
+                if output_video_path:
+                    # 저장된 파일 크기 확인
+                    import os
+                    if os.path.exists(output_video_path):
+                        file_size = os.path.getsize(output_video_path) / (1024 * 1024)  # MB
+                        print(f"\n{'='*60}")
+                        print(f"💾 비디오 저장 완료: {output_video_path}")
+                        print(f"   파일 크기: {file_size:.2f} MB")
+                        print(f"   총 프레임: {frame_count} 프레임")
+                        if total_frames:
+                            print(f"   원본 프레임: {total_frames} 프레임")
+                        print(f"{'='*60}\n")
+                    else:
+                        print(f"\n⚠️  비디오 파일이 저장되지 않았습니다: {output_video_path}\n")
+            elif is_video_file:
+                print(f"\n⚠️  비디오 Writer가 초기화되지 않아 비디오가 저장되지 않았습니다.\n")
             cv2.destroyAllWindows()
     
     def _check_condition(self, boxes):
